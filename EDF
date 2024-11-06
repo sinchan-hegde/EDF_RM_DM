@@ -1,0 +1,218 @@
+#include <Arduino_FreeRTOS.h>
+
+#include <Arduino.h>
+
+class Node {
+public:
+    String name;
+    int period;
+    int absD;
+    int execT;
+    int arrival_time;
+    Node* next;
+
+    Node() {
+        name = "";
+        period = 0;
+        absD = 0;
+        execT = 0;
+        arrival_time = 0;
+        next = nullptr;
+    }
+};
+
+class LinkedList {
+public:
+    Node* head;
+
+    LinkedList() {
+        head = nullptr;
+    }
+
+    // Function to add a node in EDF order
+    void addNode(int period, int absD, int execT, String name, int arrival_time) {
+        Node* n = new Node();
+        n->period = period;
+        n->absD = absD;
+        n->execT = execT;
+        n->name = name;
+        n->arrival_time = arrival_time;
+
+        // Case 1: Empty list
+        if (head == nullptr) {
+            head = n;
+            return;
+        }
+
+        // Case 2: Insert the node at the correct position based on absolute deadline
+        Node* curr = head;
+        Node* prev = nullptr;
+        while (curr != nullptr && curr->absD <= absD) {
+            prev = curr;
+            curr = curr->next;
+        }
+
+        // Insert the new node between prev and curr
+        if (prev == nullptr) {
+            n->next = head;
+            head = n;
+        } else {
+            n->next = curr;
+            prev->next = n;
+        }
+    }
+
+    void removeHead() {
+        if (head != nullptr) {
+Node* temp = head;
+            head = head->next;
+            delete temp;
+        }
+    }
+};
+
+// Job characteristics
+const int periods[] = {5, 40, 20};
+const int relDs[] = {5, 30, 15};
+const int execTs[] = {2, 12, 4};
+const int interval = 100;
+
+void setup() {
+    // Initialize serial communication
+    Serial.begin(9600);
+
+    // Initialize performance metrics
+    int jobs_meeting_deadlines = 0;
+    int task_switches = 0;
+    double scheduling_overhead = 0;
+    int total_response_time = 0;
+    int missed_deadlines = 0;
+    int active_cpu_time = 0;
+
+    String previous_head_name = "";
+
+    // Create the job list
+    LinkedList jobList;
+
+    // Iterate through each time unit in the interval
+    for (int i = 0; i <= interval; i++) {
+        // Start measuring time for scheduling overhead
+        unsigned long start_time = millis();
+
+        // Check each job's period and create new jobs if needed
+        for (int j = 0; j < 3; j++) {
+            if (i % periods[j] == 0) {
+                String vName = "T" + String(j + 1) + "J" + String((i / periods[j]) + 1);
+                jobList.addNode(periods[j], i + relDs[j], execTs[j], vName, i);
+            }
+        }
+
+        // Retrieve the head node from the list
+        Node* head = jobList.head;
+
+        // Check the status of the head job
+        if (head != nullptr) {
+            Serial.print("* Time ");
+            Serial.print(i);
+            Serial.print(": ");
+            Serial.print(head->name);
+            Serial.print(": [");
+            Serial.print(head->execT);
+            Serial.print(", ");
+            Serial.print(head->absD);
+            Serial.println("]");
+
+            // Check if the job meets its deadline
+            if (i >= head->absD) {
+                Serial.println("-> Deadline Missed");
+                missed_deadlines++;
+            } else {
+                // Increment the counter for jobs meeting deadlines
+                jobs_meeting_deadlines++;
+            }
+
+            // Print the queue
+            Serial.print("-> Queue: ");
+            Node* current_node = jobList.head;
+            while (current_node != nullptr) {
+                Serial.print(current_node->name);
+                Serial.print("[");
+                Serial.print(current_node->execT);
+                Serial.print(", ");
+                Serial.print(current_node->absD);
+                Serial.print("] ");
+                current_node = current_node->next;
+            }
+Serial.println();
+
+            // Calculate response time for the head job
+            int response_time = i - head->arrival_time;
+            total_response_time += response_time;
+
+            // Check for task switches
+            if (previous_head_name != "" && head->name != previous_head_name) {
+                task_switches++;
+            }
+
+            // Update the previous head job name
+            previous_head_name = head->name;
+
+            // Execute the head job
+            head->execT--;
+
+            // Increment active CPU time
+            active_cpu_time++;
+
+            // Remove the head job if execution time is completed
+            if (head->execT == 0) {
+                jobList.removeHead();
+            }
+        }
+
+        // Stop measuring time for scheduling overhead
+        unsigned long end_time = millis();
+
+        // Calculate scheduling overhead for this iteration
+        double iteration_overhead = double(end_time - start_time) / 1000.0;
+        scheduling_overhead += iteration_overhead;
+
+    }
+
+    // Calculate performance metrics
+    int total_jobs = interval + 1;  // Total number of jobs executed
+
+    // Calculate percentage of tasks meeting deadlines
+    double percentage_meeting_deadlines = (total_jobs > 0) ? (jobs_meeting_deadlines / double(total_jobs) * 100) : 0;
+
+    // Calculate average response time
+    double average_response_time = (jobs_meeting_deadlines > 0) ? (total_response_time / double(jobs_meeting_deadlines)) : 0;
+
+    // Calculate CPU utilization
+    double cpu_utilization = (active_cpu_time / double(total_jobs)) * 100;
+
+    // Print performance metrics
+    Serial.print("Number of context switches: ");
+    Serial.println(task_switches);
+    // Print number of missed deadlines
+    Serial.print("Missed Deadlines: ");
+    Serial.println(missed_deadlines);
+    // Print scheduling overhead
+    Serial.print("Total scheduling overhead: ");
+    Serial.print(scheduling_overhead, 6);
+    Serial.println(" seconds");
+    // Print average response time
+    Serial.print("Average response time: ");
+    Serial.print(average_response_time, 2);
+    Serial.println(" seconds");
+    // Print CPU utilization
+    Serial.print("CPU utilization: ");
+    Serial.print(cpu_utilization, 2);
+    Serial.println("%");
+}
+
+void loop() {
+  // Start the scheduler
+    vTaskStartScheduler();
+}
+
+
